@@ -1,5 +1,7 @@
 # SafetyWatch AI
 
+[![CI](https://github.com/ibrahimbinbuga/SafetyWatchAI/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ibrahimbinbuga/SafetyWatchAI/actions/workflows/ci.yml)
+
 Workplace safety monitoring with computer vision. SafetyWatch watches camera streams with YOLO
 models and spots **missing helmets, missing safety vests and worker falls**. Each violation is
 saved and shown to safety staff in real time. The web dashboard is where they review violations
