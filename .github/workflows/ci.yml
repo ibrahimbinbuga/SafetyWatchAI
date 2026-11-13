@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  pull_request:
+    branches:
+      - main
+      - 'feature/**'
+
+permissions:
+  contents: read
+
+# Cancel older runs of the same branch / PR when a new commit arrives.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web (frontend)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js (LTS)
+        uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # TODO: The existing code has lint errors. This step reports them but does not
+      # fail the job. Remove `continue-on-error` once the lint errors are fixed.
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: frontend/coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Build
+        run: npm run build
+
+  mobile:
+    name: Mobile (Flutter)
+    runs-on: ubuntu-latest
+    env:
+      MOBILE_DIR: mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # The mobile app is not in the repo yet. If there is no pubspec.yaml, the
+      # remaining steps are skipped and the job passes.
+      # Flutter version: .fvmrc -> .fvm/fvm_config.json -> exact `flutter:` pin in
+      # pubspec.yaml -> otherwise latest stable.
+      - name: Detect Flutter project and version
+        id: detect
+        shell: bash
+        run: |
+          if [ ! -f "$MOBILE_DIR/pubspec.yaml" ]; then
+            echo "No $MOBILE_DIR/pubspec.yaml found, skipping mobile checks."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+          version=""
+          for f in "$MOBILE_DIR/.fvmrc" ".fvmrc" "$MOBILE_DIR/.fvm/fvm_config.json"; do
+            if [ -z "$version" ] && [ -f "$f" ]; then
+              version=$(jq -r '.flutter // .flutterSdkVersion // empty' "$f")
+            fi
+          done
+          if [ -z "$version" ]; then
+            # Use only an exact version like `flutter: 3.35.7`, not a range like ">=3.0.0".
+            version=$(sed -n '/^environment:/,/^[^[:space:]]/ s/^[[:space:]]*flutter:[[:space:]]*["'\'']\{0,1\}\([0-9][0-9.]*\)["'\'']\{0,1\}[[:space:]]*$/\1/p' "$MOBILE_DIR/pubspec.yaml" | head -n1)
+          fi
+          echo "Detected Flutter version: ${version:-<none, using latest stable>}"
+          echo "flutter_version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        if: steps.detect.outputs.present == 'true'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.detect.outputs.flutter_version }}
+          cache: true # caches the Flutter SDK and the pub cache
+
+      - name: Install dependencies
+        if: steps.detect.outputs.present == 'true'
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: flutter pub get
+
+      - name: Analyze
+        if: steps.detect.outputs.present == 'true'
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: flutter analyze
+
+      - name: Test with coverage
+        if: steps.detect.outputs.present == 'true'
+        working-directory: ${{ env.MOBILE_DIR }}
+        run: flutter test --coverage
