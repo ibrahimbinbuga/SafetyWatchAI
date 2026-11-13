@@ -51,3 +51,6 @@ build/
 # Environment variables
 .env
 .env.local
+
+# Test coverage output
+frontend/coverage/
